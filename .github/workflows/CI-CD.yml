@@ -19,7 +19,7 @@ jobs:
       )
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v7
       with:
           submodules: recursive
 
@@ -76,7 +76,7 @@ jobs:
       )
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v7
       with:
           submodules: recursive
 
@@ -128,7 +128,7 @@ jobs:
       )
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v7
       with:
           submodules: recursive
 
@@ -182,7 +182,7 @@ jobs:
       )
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v7
       with:
           submodules: recursive
 
@@ -237,7 +237,7 @@ jobs:
       )
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -321,7 +321,7 @@ jobs:
         if-no-files-found: error
 
     - name: Checkout public otclientv8
-      uses: actions/checkout@v2
+      uses: actions/checkout@v7
       with:
         repository: OTCv8/otclientv8
         path: otclientv8
