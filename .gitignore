@@ -134,3 +134,7 @@ _ReSharper*/
 
 # JetBrain tools
 /.idea
+/modules*
+/data*
+/mods*
+/data
