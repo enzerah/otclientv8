@@ -18,18 +18,18 @@ jobs:
         id: setup_msbuild
 
       - name: Run vcpkg
-        uses: lukka/run-vcpkg@v7
+        uses: lukka/run-vcpkg@v11
         with:
-          vcpkgDirectory: ${{ runner.workspace }}/vcpkg/
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgTriplet: x86-windows-static
-          vcpkgGitCommitId: 3b3bd424827a1f7f4813216f6b32b6c61e386b2e
+          vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
           vcpkgArguments: >
             boost-iostreams boost-asio boost-beast boost-system boost-variant boost-lockfree boost-process boost-program-options boost-uuid boost-filesystem
             luajit glew physfs openal-soft libogg libvorbis zlib libzip bzip2 openssl
 
       - name: Integrate vcpkg
         run: |
-          ${{ runner.workspace }}/vcpkg/vcpkg integrate install
+          ${{ github.workspace }}\vcpkg\vcpkg integrate install
 
       - name: Compile otclient_dx
         timeout-minutes: 20
@@ -51,6 +51,16 @@ jobs:
             otclient_gl.exe
             otclient_dx.exe
           if-no-files-found: error
+
+      - name: Upload vcpkg logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcpkg-logs-windows
+          path: |
+            ${{ github.workspace }}/vcpkg/buildtrees/**/*
+            ${{ github.workspace }}/vcpkg/installed/vcpkg/info/**/*
+          if-no-files-found: ignore
 
   Android:
     name: Build android version
@@ -116,15 +126,15 @@ jobs:
         run: brew install physfs pkgconfig luajit xquartz
 
       - name: Run vcpkg
-        uses: lukka/run-vcpkg@v7
+        uses: lukka/run-vcpkg@v11
         with:
           vcpkgArguments: >
             boost-iostreams boost-asio boost-system boost-variant boost-lockfree boost-beast glew
             boost-filesystem boost-uuid libogg libvorbis zlib opengl libzip openal-soft bzip2
             boost-process openssl
-          vcpkgDirectory: ${{ runner.workspace }}/vcpkg/
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgTriplet: x64-osx
-          vcpkgGitCommitId: 761c81d43335a5d5ccc2ec8ad90bd7e2cbba734e
+          vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
 
       - name: Build with CMake
         uses: lukka/run-cmake@v3
@@ -146,6 +156,16 @@ jobs:
             ${{ runner.workspace }}/build/otclient_mac
           if-no-files-found: error
 
+      - name: Upload vcpkg logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcpkg-logs-mac
+          path: |
+            ${{ github.workspace }}/vcpkg/buildtrees/**/*
+            ${{ github.workspace }}/vcpkg/installed/vcpkg/info/**/*
+          if-no-files-found: ignore
+
   Linux:
     name: Build linux version
     runs-on: ubuntu-20.04
@@ -164,15 +184,15 @@ jobs:
         run: sudo apt update && sudo apt install -y libglew-dev liblua5.1-0-dev libluajit-5.1-dev
 
       - name: Run vcpkg
-        uses: lukka/run-vcpkg@v7
+        uses: lukka/run-vcpkg@v11
         with:
           vcpkgArguments: >
             boost-iostreams boost-asio boost-system boost-variant boost-lockfree boost-beast glew
             boost-filesystem boost-uuid libogg libvorbis zlib opengl libzip openal-soft bzip2
             boost-process openssl physfs
-          vcpkgDirectory: ${{ runner.workspace }}/vcpkg/
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgTriplet: x64-linux
-          vcpkgGitCommitId: 761c81d43335a5d5ccc2ec8ad90bd7e2cbba734e
+          vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
 
       - name: Build with CMake
         uses: lukka/run-cmake@v3
@@ -193,3 +213,13 @@ jobs:
           path: |
             ${{ runner.workspace }}/build/otclient_linux
           if-no-files-found: error
+
+      - name: Upload vcpkg logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcpkg-logs-linux
+          path: |
+            ${{ github.workspace }}/vcpkg/buildtrees/**/*
+            ${{ github.workspace }}/vcpkg/installed/vcpkg/info/**/*
+          if-no-files-found: ignore
