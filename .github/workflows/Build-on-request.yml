@@ -17,42 +17,7 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # Cria um manifest controlado pra impedir o run-vcpkg de pegar algum vcpkg.json "perdido" no repo/submodules
-      - name: Create vcpkg manifest (Windows x86-windows-static)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.github\vcpkg" | Out-Null
-          @'
-          {
-            "name": "otclientv8-ci",
-            "version-string": "0.0.0",
-            "builtin-baseline": "66c0373dc7fca549e5803087b9487edfe3aca0a1",
-            "dependencies": [
-              "boost-iostreams",
-              "boost-asio",
-              "boost-beast",
-              "boost-system",
-              "boost-variant",
-              "boost-lockfree",
-              "boost-process",
-              "boost-program-options",
-              "boost-uuid",
-              "boost-filesystem",
-              "luajit",
-              "glew",
-              "physfs",
-              "openal-soft",
-              "libogg",
-              "libvorbis",
-              "zlib",
-              "libzip",
-              "bzip2",
-              "openssl"
-            ]
-          }
-          '@ | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\.github\vcpkg\vcpkg.json"
-
-      - name: Run vcpkg (manifest mode, controlled)
+      - name: Run vcpkg (manifest mode)
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
@@ -67,49 +32,42 @@ jobs:
         run: |
           & "${{ github.workspace }}\vcpkg\vcpkg.exe" integrate install
 
-      - name: Debug - find .sln
+      - name: Find solution file
         shell: pwsh
         run: |
           Write-Host "Searching for .sln files..."
           Get-ChildItem -Recurse -Filter *.sln $env:GITHUB_WORKSPACE | Select-Object FullName
 
-      - name: Build DirectX (auto-detect .sln)
+      - name: Build DirectX
         shell: pwsh
         run: |
           $sln = Get-ChildItem -Recurse -Filter *.sln $env:GITHUB_WORKSPACE | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $sln) { throw "No .sln found. Check repository layout/submodules." }
-          Write-Host "Using solution: $sln"
+          if (-not $sln) { throw "No .sln found." }
           MSBuild $sln /m /property:Configuration=DirectX /p:BUILD_REVISION=${{ github.run_number }}
 
-      - name: Build OpenGL (auto-detect .sln)
+      - name: Build OpenGL
         shell: pwsh
         run: |
           $sln = Get-ChildItem -Recurse -Filter *.sln $env:GITHUB_WORKSPACE | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $sln) { throw "No .sln found. Check repository layout/submodules." }
-          Write-Host "Using solution: $sln"
+          if (-not $sln) { throw "No .sln found." }
           MSBuild $sln /m /property:Configuration=OpenGL /p:BUILD_REVISION=${{ github.run_number }}
 
-      - name: Collect build outputs
+      - name: Collect executables
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\artifacts" | Out-Null
-          # Ajuste o filtro se seus binários tiverem outro nome/caminho
-          $exes = Get-ChildItem -Recurse -Filter "*.exe" $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Name -in @("otclient_gl.exe","otclient_dx.exe") }
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Get-ChildItem -Recurse -Filter "*.exe" |
+            Where-Object { $_.Name -in @("otclient_gl.exe","otclient_dx.exe") } |
+            ForEach-Object { Copy-Item $_.FullName artifacts }
 
-          if ($exes.Count -eq 0) {
-            Write-Host "Didn't find otclient_gl.exe / otclient_dx.exe. Dumping likely output folders..."
-            Get-ChildItem -Recurse -Directory $env:GITHUB_WORKSPACE | Where-Object { $_.FullName -match "bin|output|Release|DirectX|OpenGL" } | Select-Object -First 50 FullName
-            throw "Binaries not found. Adjust Collect step to the real output path."
+          if (-not (Get-ChildItem artifacts)) {
+            throw "Executables not found. Adjust output path."
           }
-
-          $exes | ForEach-Object { Copy-Item $_.FullName "$env:GITHUB_WORKSPACE\artifacts\" -Force }
-          Get-ChildItem "$env:GITHUB_WORKSPACE\artifacts" | Select-Object Name,Length,LastWriteTime
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: Download-binaries-windows
+          name: otclient-windows
           path: artifacts/*
           if-no-files-found: error
 
@@ -117,236 +75,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: vcpkg-logs-windows
-          path: |
-            ${{ github.workspace }}/vcpkg/buildtrees/**/*
-            ${{ github.workspace }}/vcpkg/installed/vcpkg/info/**/*
-            ${{ github.workspace }}/vcpkg/vcpkg-manifest-install.log
-          if-no-files-found: ignore
-
-  Android:
-    name: Build android version
-    runs-on: windows-2019
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Create data.zip for android
-        shell: pwsh
-        run: |
-          powershell -ExecutionPolicy Bypass -File .\create_android_assets.ps1
-
-      - name: Decompress android libs
-        shell: pwsh
-        run: |
-          7z x android_libs.7z -aoa -oC:\android
-
-      - name: Install android NDK
-        shell: pwsh
-        run: |
-          $sdkRoot = "C:\Android\android-sdk"
-          $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
-          Install-AndroidSDKPackages -AndroidSDKManagerPath $sdkManager `
-                                    -AndroidSDKRootPath $sdkRoot `
-                                    -AndroidPackages "ndk;21.4.7075529"
-
-      - name: Build for android
-        timeout-minutes: 25
-        shell: pwsh
-        run: |
-          cd android
-          $env:VS_NdkRoot="C:\Android\android-sdk\ndk\21.4.7075529"
-          MSBuild.exe /p:Configuration=Release /p:Platform="ARM64" /p:BUILD_REVISION=${{ github.run_number }}
-
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: Download-binaries-android
-          path: otclientv8.apk
-          if-no-files-found: error
-
-  Mac:
-    name: Build mac os version
-    runs-on: macos-latest
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Get latest CMake
-        uses: lukka/get-cmake@latest
-
-      - name: MacOS deps
-        run: brew install physfs pkgconfig luajit xquartz
-
-      - name: Create vcpkg manifest (mac)
-        shell: bash
-        run: |
-          mkdir -p .github/vcpkg
-          cat > .github/vcpkg/vcpkg.json <<'JSON'
-          {
-            "name": "otclientv8-ci",
-            "version-string": "0.0.0",
-            "builtin-baseline": "66c0373dc7fca549e5803087b9487edfe3aca0a1",
-            "dependencies": [
-              "boost-iostreams",
-              "boost-asio",
-              "boost-system",
-              "boost-variant",
-              "boost-lockfree",
-              "boost-beast",
-              "glew",
-              "boost-filesystem",
-              "boost-uuid",
-              "libogg",
-              "libvorbis",
-              "zlib",
-              "opengl",
-              "libzip",
-              "openal-soft",
-              "bzip2",
-              "boost-process",
-              "openssl"
-            ]
-          }
-          JSON
-
-      - name: Run vcpkg (mac)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
-          vcpkgJsonGlob: '.github/vcpkg/vcpkg.json'
-          runVcpkgInstall: true
-        env:
-          VCPKG_DEFAULT_TRIPLET: x64-osx
-
-      - name: Build with CMake
-        uses: lukka/run-cmake@v3
-        with:
-          buildDirectory: ${{ runner.workspace }}/build
-          cmakeAppendedArgs: '-G Ninja -DCMAKE_BUILD_TYPE="Release" -DVERSION=${{ github.run_number }}'
-          cmakeListsOrSettingsJson: CMakeListsTxtAdvanced
-          useVcpkgToolchainFile: true
-
-      - name: Change name
-        run: |
-          mv '${{ runner.workspace }}/build/otclient' '${{ runner.workspace }}/build/otclient_mac'
-
-      - name: Upload otclient
-        uses: actions/upload-artifact@v4
-        with:
-          name: Download-binaries-mac
-          path: ${{ runner.workspace }}/build/otclient_mac
-          if-no-files-found: error
-
-      - name: Upload vcpkg logs (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vcpkg-logs-mac
-          path: |
-            ${{ github.workspace }}/vcpkg/buildtrees/**/*
-            ${{ github.workspace }}/vcpkg/installed/vcpkg/info/**/*
-          if-no-files-found: ignore
-
-  Linux:
-    name: Build linux version
-    runs-on: ubuntu-20.04
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Get latest CMake
-        uses: lukka/get-cmake@latest
-
-      - name: Ubuntu deps
-        run: sudo apt update && sudo apt install -y libglew-dev liblua5.1-0-dev libluajit-5.1-dev
-
-      - name: Create vcpkg manifest (linux)
-        shell: bash
-        run: |
-          mkdir -p .github/vcpkg
-          cat > .github/vcpkg/vcpkg.json <<'JSON'
-          {
-            "name": "otclientv8-ci",
-            "version-string": "0.0.0",
-            "builtin-baseline": "66c0373dc7fca549e5803087b9487edfe3aca0a1",
-            "dependencies": [
-              "boost-iostreams",
-              "boost-asio",
-              "boost-system",
-              "boost-variant",
-              "boost-lockfree",
-              "boost-beast",
-              "glew",
-              "boost-filesystem",
-              "boost-uuid",
-              "libogg",
-              "libvorbis",
-              "zlib",
-              "opengl",
-              "libzip",
-              "openal-soft",
-              "bzip2",
-              "boost-process",
-              "openssl",
-              "physfs"
-            ]
-          }
-          JSON
-
-      - name: Run vcpkg (linux)
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
-          vcpkgJsonGlob: '.github/vcpkg/vcpkg.json'
-          runVcpkgInstall: true
-        env:
-          VCPKG_DEFAULT_TRIPLET: x64-linux
-
-      - name: Build with CMake
-        uses: lukka/run-cmake@v3
-        with:
-          buildDirectory: ${{ runner.workspace }}/build
-          cmakeAppendedArgs: '-G Ninja -DCMAKE_BUILD_TYPE="Release" -DVERSION=${{ github.run_number }}'
-          cmakeListsOrSettingsJson: CMakeListsTxtAdvanced
-          useVcpkgToolchainFile: true
-
-      - name: Change name
-        run: |
-          mv '${{ runner.workspace }}/build/otclient' '${{ runner.workspace }}/build/otclient_linux'
-
-      - name: Upload otclient
-        uses: actions/upload-artifact@v4
-        with:
-          name: Download-binaries-linux
-          path: ${{ runner.workspace }}/build/otclient_linux
-          if-no-files-found: error
-
-      - name: Upload vcpkg logs (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vcpkg-logs-linux
+          name: vcpkg-logs
           path: |
             ${{ github.workspace }}/vcpkg/buildtrees/**/*
             ${{ github.workspace }}/vcpkg/installed/vcpkg/info/**/*
