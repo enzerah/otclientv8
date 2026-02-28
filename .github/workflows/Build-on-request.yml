@@ -12,44 +12,72 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Debug - list repo folders and find solutions
+        shell: pwsh
+        run: |
+          Write-Host "Workspace: $env:GITHUB_WORKSPACE"
+          Get-ChildItem -Force $env:GITHUB_WORKSPACE | Format-Table Name,Mode,LastWriteTime
+          Write-Host "`nSearching for .sln files..."
+          Get-ChildItem -Recurse -Filter *.sln $env:GITHUB_WORKSPACE | Select-Object FullName
 
       - name: Setup MSBuild and add to PATH
         uses: microsoft/setup-msbuild@v2
-        id: setup_msbuild
 
-      - name: Run vcpkg
+      - name: Run vcpkg (install deps)
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgTriplet: x86-windows-static
           vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
-          vcpkgArguments: >
-            boost-iostreams boost-asio boost-beast boost-system boost-variant boost-lockfree boost-process boost-program-options boost-uuid boost-filesystem
-            luajit glew physfs openal-soft libogg libvorbis zlib libzip bzip2 openssl
+          # Roda o install "clássico" (não-manifest) com triplet + lista de ports
+          runVcpkgInstall: true
+          runVcpkgFormatString: >
+            ["install",
+            "boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem",
+            "luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl",
+            "--triplet","x86-windows-static"]
 
       - name: Integrate vcpkg
+        shell: pwsh
         run: |
-          ${{ github.workspace }}\vcpkg\vcpkg integrate install
+          & "${{ github.workspace }}\vcpkg\vcpkg.exe" integrate install
 
-      - name: Compile otclient_dx
-        timeout-minutes: 20
+      - name: Build (auto-detect .sln) - DirectX
+        shell: pwsh
         run: |
-          cd vc16
-          MSBuild /property:Configuration=DirectX /p:BUILD_REVISION=${{ github.run_number }}
+          $sln = Get-ChildItem -Recurse -Filter *.sln $env:GITHUB_WORKSPACE | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sln) { throw "No .sln found in repository. Check checkout/submodules." }
+          Write-Host "Using solution: $sln"
+          MSBuild $sln /m /property:Configuration=DirectX /p:BUILD_REVISION=${{ github.run_number }}
 
-      - name: Compile otclient_gl
-        timeout-minutes: 20
+      - name: Build (auto-detect .sln) - OpenGL
+        shell: pwsh
         run: |
-          cd vc16
-          MSBuild /property:Configuration=OpenGL /p:BUILD_REVISION=${{ github.run_number }}
+          $sln = Get-ChildItem -Recurse -Filter *.sln $env:GITHUB_WORKSPACE | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sln) { throw "No .sln found in repository. Check checkout/submodules." }
+          Write-Host "Using solution: $sln"
+          MSBuild $sln /m /property:Configuration=OpenGL /p:BUILD_REVISION=${{ github.run_number }}
+
+      - name: Collect build outputs (best-effort)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\artifacts" | Out-Null
+          $exes = Get-ChildItem -Recurse -Filter "otclient_*.exe" $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
+          if ($exes) {
+            $exes | ForEach-Object { Copy-Item $_.FullName "$env:GITHUB_WORKSPACE\artifacts\" -Force }
+            Write-Host "Copied:"
+            Get-ChildItem "$env:GITHUB_WORKSPACE\artifacts" | Select-Object Name,Length,LastWriteTime
+          } else {
+            Write-Host "No otclient_*.exe found. You may need to adjust the search/copy pattern."
+          }
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: Download-binaries-windows
           path: |
-            otclient_gl.exe
-            otclient_dx.exe
+            artifacts/*
           if-no-files-found: error
 
       - name: Upload vcpkg logs (on failure)
@@ -72,20 +100,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Setup MSBuild and add to PATH
         uses: microsoft/setup-msbuild@v2
-        id: setup_msbuild
 
       - name: Create data.zip for android
+        shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -File .\create_android_assets.ps1
 
       - name: Decompress android libs
+        shell: pwsh
         run: |
           7z x android_libs.7z -aoa -oC:\android
 
-      - name: Install android
+      - name: Install android NDK
+        shell: pwsh
         run: |
           $sdkRoot = "C:\Android\android-sdk"
           $sdkManager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
@@ -95,6 +126,7 @@ jobs:
 
       - name: Build for android
         timeout-minutes: 25
+        shell: pwsh
         run: |
           cd android
           $env:VS_NdkRoot="C:\Android\android-sdk\ndk\21.4.7075529"
@@ -118,6 +150,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Get latest CMake
         uses: lukka/get-cmake@latest
@@ -125,16 +158,18 @@ jobs:
       - name: MacOS - install physfs pkgconfig luajit xquartz
         run: brew install physfs pkgconfig luajit xquartz
 
-      - name: Run vcpkg
+      - name: Run vcpkg (install deps)
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgArguments: >
-            boost-iostreams boost-asio boost-system boost-variant boost-lockfree boost-beast glew
-            boost-filesystem boost-uuid libogg libvorbis zlib opengl libzip openal-soft bzip2
-            boost-process openssl
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgTriplet: x64-osx
           vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
+          runVcpkgInstall: true
+          runVcpkgFormatString: >
+            ["install",
+            "boost-iostreams","boost-asio","boost-system","boost-variant","boost-lockfree","boost-beast","glew",
+            "boost-filesystem","boost-uuid","libogg","libvorbis","zlib","opengl","libzip","openal-soft","bzip2",
+            "boost-process","openssl",
+            "--triplet","x64-osx"]
 
       - name: Build with CMake
         uses: lukka/run-cmake@v3
@@ -176,6 +211,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Get latest CMake
         uses: lukka/get-cmake@latest
@@ -183,16 +219,18 @@ jobs:
       - name: Ubuntu - install opengl lua5.1 luajit
         run: sudo apt update && sudo apt install -y libglew-dev liblua5.1-0-dev libluajit-5.1-dev
 
-      - name: Run vcpkg
+      - name: Run vcpkg (install deps)
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgArguments: >
-            boost-iostreams boost-asio boost-system boost-variant boost-lockfree boost-beast glew
-            boost-filesystem boost-uuid libogg libvorbis zlib opengl libzip openal-soft bzip2
-            boost-process openssl physfs
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgTriplet: x64-linux
           vcpkgGitCommitId: 66c0373dc7fca549e5803087b9487edfe3aca0a1
+          runVcpkgInstall: true
+          runVcpkgFormatString: >
+            ["install",
+            "boost-iostreams","boost-asio","boost-system","boost-variant","boost-lockfree","boost-beast","glew",
+            "boost-filesystem","boost-uuid","libogg","libvorbis","zlib","opengl","libzip","openal-soft","bzip2",
+            "boost-process","openssl","physfs",
+            "--triplet","x64-linux"]
 
       - name: Build with CMake
         uses: lukka/run-cmake@v3
